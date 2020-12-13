@@ -39,6 +39,6 @@ if __name__ == "__main__":
     plt.title('Objective values')
     plt.savefig('objective_value.png')
     plt.close()
-    plot_best()
+    # plot_best()
 
 
