@@ -3,6 +3,7 @@ __pycache__/
 *.csv
 !tour29.csv
 *.png
+temp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

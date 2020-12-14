@@ -9,9 +9,15 @@ if ! [ -f $student_number.py ]; then
     exit
 fi
 
+function exitus() {
+    echo "Exiting program."
+    rm -v $script $py_csv
+    cd $root
+}
+
 function cleanup() {
     echo "** Trapped CTRL-C"
-    rm -v $script $hist_csv $py_csv
+    rm -v $script $py_csv
     cd $root
 }
 trap cleanup INT
@@ -57,7 +63,7 @@ cp $root/$tour_csv_name $tour_csv
 cp $root/Reporter.py $temp/Reporter.py
 cp $root/histogram.py $temp/histogram.py
 sed -E -i -e "s/$student_number/$py_csv_base/g" $script
-[ $? -ne 0 ] && exit
+[ $? -ne 0 ] && exitus
 
 echo "Run, Iterations, Time, Mean value, Best value" > $hist_csv
 cd $temp
@@ -65,9 +71,9 @@ echo "Running $student_number.py $no_test_runs times."
 for (( i=1; i<=$no_test_runs; i++ ))
 do
     python3 $script > /dev/null
-    [ $? -ne 0 ] && exit
+    [ $? -ne 0 ] && exitus
     tail -1  $py_csv | sed -E -e "s/(([0-9.]+,){3}[0-9.]+).*/$i,\1/" >> $hist_csv
-    [ $? -ne 0 ] && exit
+    [ $? -ne 0 ] && exitus
     ((i%10==0)) && echo "Done $i runs."
 done
 echo "Done with runs."
@@ -75,5 +81,4 @@ echo "Done with runs."
 python3 $temp/histogram.py $hist_csv
 mv $temp/histogram.png $out/$my_name.png
 
-rm $script $hist_csv $py_csv
-cd $root
+exitus

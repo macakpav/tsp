@@ -29,23 +29,40 @@ class r0829194:
         self.n_cities = 0
         self.pop_size = 100  # desired lambda size
         self.num_offspring = self.pop_size  # offspring generation size
-        self.tolerance = 1e-12
-        self.checkInterval = 30
+        self.tolerance = 1e-12  # below this the relative norm is considered zero
+        self.checkInterval = 30 # before advancing stage
 
         # METHODS
+        self.stage = 1
         self.selection = self.selection_roullete_wheel
-        self.mutation = self.mutation_keep_the_best
+        self.mutation = self.mutation_discard_worse
+        self.local_search = lambda self: 0#self.lopt_2opt_flip_elite
         self.elimination = self.elimination_mu_lambda_k_crowding
 
         # META parameters
-        self.k_tournament = 5               # k-tournament selection
-        self.k_crowding = 20                # k-tournament crowding
-        self.keep_mutation = 20             # number of best individuals left unmutated
-        self.crowding_pop_count = 50        # number of individuals purged due to crowding
-        self.init_mut_prob_flip = 0.15      # initial probability of flip mutation
-        self.init_mut_prob_shuf = 0.1       # initial probability of shuffle mutation
-        self.init_mut_prob_swap = 0.05      # initial probability of swap mutation
-        self.min_mut_prob = 0.01            # minimal mutation probability for all
+
+        # selection
+        self.k_tournament = int(self.pop_size*0.05)               # k-tournament selection
+
+        # crowding
+        self.k_crowding = int(self.pop_size/5)                # k-tournament crowding
+        self.k_crowding_pop_count = int(self.pop_size/4)      # number of individuals purged due to crowding
+
+        # mutation
+        self.no_elites = 3                  # number of best individuals kept and improved
+        self.init_mut_prob_flip = 0.35      # initial probability of flip mutation
+        self.init_mut_prob_shuf = 0.25      # initial probability of shuffle mutation
+        self.init_mut_prob_swap = 0.15      # initial probability of swap mutation
+        self.min_mut_prob = 0.02            # minimal mutation probability for all
+        self.mut_boost_treshold = 0.1       # with lower mutation average a boost will ocur
+        self.mut_boost_coefficient = 0.5    # mutation gets boosted by Coef * Init_mut_prob
+
+    def start_second_stage(self):
+        self.stage=2
+        print("\n\nSwitching to second stage.\n\n")
+        self.elimination = self.elimination_mu_lambda
+        # self.local_search = self.lopt_2opt_flip_short
+        self.checkInterval = (6*self.checkInterval)/5
 
     # The evolutionary algorithm's main loop
     def optimize(self, filename) -> int:
@@ -56,10 +73,11 @@ class r0829194:
 
         # Your code here.
         self.n_cities = self.distanceMatrix.shape[0]  # number of cities
-        # self.k = math.ceil(self.pop_size*0.05) # for k-tournament
+        self.checkInterval = int(max(20,min(35,-20./1000.*self.n_cities+37.)))
 
         # initialization
         self.population = self.initialization(self.pop_size, self.n_cities)
+        self.lopt_2opt_flip_short()
         self.offspring = [self.Individual]*self.num_offspring
 
         # initial cost function values
@@ -73,24 +91,26 @@ class r0829194:
         while True:
             i += 1
 
-            # stopping criterion
-            if i % self.checkInterval == 0:
-                if not meanTourLen == float("inf"):
-                    if abs(bestTourLen-previousBestTourLen)/abs(bestTourLen) < self.tolerance:
-                        if self.elimination == self.elimination_mu_lambda_k_crowding:
-                            print("Switching elimination method at iteration:", i)
-                            print("Best tour at iteration",
-                                  i, ":", bestTourLen)
-                            self.elimination = self.elimination_mu_lambda
-                            self.checkInterval = 50
-                        if abs(meanTourLen-previousMeanTourLen)/abs(meanTourLen) < self.tolerance:
-                            break
-                    previousMeanTourLen = meanTourLen
-                    previousBestTourLen = bestTourLen
+            mut_rate_avg = sum([(ind.mut_prob_flip_ + ind.mut_prob_shuf_ +
+                                 ind.mut_prob_swap_)/3 for ind in self.population])/self.pop_size
+            if mut_rate_avg < self.mut_boost_treshold:
+                self.boost_mutation_rate()
 
-            # weights for roulette wheel selection
-            # total_fitness = sum([i.evaluate(self.distanceMatrix)
-            #                      for i in self.population])
+            # stopping criterion
+            # print(i,"\tBest:", bestTourLen, ", Mean:", meanTourLen)
+            if i % self.checkInterval == 0:
+                print(i,"\tBest:", bestTourLen, ", Mean:", meanTourLen
+                       , "Average mutation rate: ", mut_rate_avg)
+                # if not meanTourLen == float("inf"):
+                if abs(bestTourLen-previousBestTourLen)/abs(bestTourLen) < self.tolerance:
+                    if self.stage==1:
+                        self.start_second_stage()
+                    if abs(meanTourLen-previousMeanTourLen)/abs(meanTourLen) < self.tolerance:
+                        self.no_elites = 2
+                        self.lopt_2opt_flip_elite()
+                        break #converged
+                previousMeanTourLen = meanTourLen
+                previousBestTourLen = bestTourLen
 
             # selection
             selected = self.selection()
@@ -98,24 +118,23 @@ class r0829194:
             # recombination
             self.offspring = [self.recombination(
                 selected[i][0], selected[i][1]) for i in range(self.num_offspring)]
-            # for j in range(self.num_offspring):
-            #     p1, p2 = selected[j][:]
-            #     self.offspring[j] = (self.recombination(p1, p2))
-            #     self.offspring[j].try_to_mutate()
 
             # mutation
             self.mutation()
+            
+            # local optimization
+            # if self.stage>1:
+            # self.local_search()
 
-            # only children
-            # self.population = self.offspring
+            # elimination
             self.population = self.elimination()
 
-            # report iteration progress
+            # report progress
             values = [ind.evaluate(self.distanceMatrix)
                       for ind in self.population]
             meanTourLen = sum(values)/len(values)
             bestTourLen = min(values)
-            bestTour = self.population[values.index(bestTourLen)].path
+            bestTour = self.population[values.index(bestTourLen)].path_
             bestTour = np.append(bestTour, bestTour[0])
 
             # reporter -> write to file
@@ -178,33 +197,33 @@ class r0829194:
 
         # get slice from first parent
         a, b = normal_slice(self.n_cities, 0.5, 0.1)
-        offspring[:b-a] = p1.path[a:b]
+        offspring[:b-a] = p1.path_[a:b]
         from_p1 = set(offspring[:b-a])
 
         # fill the rest of offspring from second parent, starting from index b
         i = b-a
         for idx in range(b, self.n_cities):
-            if p2.path[idx] in from_p1:
-                from_p1.remove(p2.path[idx])
+            if p2.path_[idx] in from_p1:
+                from_p1.remove(p2.path_[idx])
                 continue
-            offspring[i] = p2.path[idx]
+            offspring[i] = p2.path_[idx]
             i += 1
         # continue from beginning until b
         for idx in range(0, b):
-            if p2.path[idx] in from_p1:
-                from_p1.remove(p2.path[idx])
+            if p2.path_[idx] in from_p1:
+                from_p1.remove(p2.path_[idx])
                 continue
-            offspring[i] = p2.path[idx]
+            offspring[i] = p2.path_[idx]
             i += 1
 
         # recombine mutation probabilities
         beta = 2 * random.random() - 0.5
-        mut_prob_flip = p1.mut_prob_flip + beta * \
-            (p2.mut_prob_flip - p1.mut_prob_flip)
-        mut_prob_shuf = p1.mut_prob_shuf + beta * \
-            (p2.mut_prob_shuf - p1.mut_prob_shuf)
-        mut_prob_swap = p1.mut_prob_swap + beta * \
-            (p2.mut_prob_swap - p1.mut_prob_swap)
+        mut_prob_flip = p1.mut_prob_flip_ + beta * \
+            (p2.mut_prob_flip_ - p1.mut_prob_flip_)
+        mut_prob_shuf = p1.mut_prob_shuf_ + beta * \
+            (p2.mut_prob_shuf_ - p1.mut_prob_shuf_)
+        mut_prob_swap = p1.mut_prob_swap_ + beta * \
+            (p2.mut_prob_swap_ - p1.mut_prob_swap_)
 
         return self.Individual(offspring, max(self.min_mut_prob, mut_prob_flip),
                                max(self.min_mut_prob, mut_prob_shuf), max(self.min_mut_prob, mut_prob_swap))
@@ -215,23 +234,102 @@ class r0829194:
     # mutate all of population and offsprings
     def mutation_all(self) -> None:
         # is there a way to make it a one-liner?
-        for ind in self.population:
-            ind.try_to_mutate()
-        for ind in self.offspring:
+        for ind in self.population + self.offspring:
             ind.try_to_mutate()
 
-    # mutate all of population exept a few of the best individuals
-    def mutation_keep_the_best(self) -> None:
+    # mutate all of population exept a few of the best individuals in parents
+    def mutation_only_plebs(self) -> None:
         self.population.sort(key=lambda ind: ind.evaluate(self.distanceMatrix))
-        for ind in self.population[self.keep_mutation:]:
+        for ind in self.population[self.no_elites:] + self.offspring:
             ind.try_to_mutate()
-        for ind in self.offspring:
-            ind.try_to_mutate()
+
+    def mutation_discard_worse(self) -> None:
+        old_path=np.empty(self.n_cities,int)
+        for ind in self.population + self.offspring:
+            old_val=ind.evaluate(self.distanceMatrix)
+            np.copyto(old_path,ind.path_)
+            ind.mutate_flip()
+            if old_val < ind.evaluate(self.distanceMatrix):
+                np.copyto(ind.path_, old_path)
+                ind.reset()
+                # debug check
+                # if old_val != ind.evaluate(self.distanceMatrix):
+                #     print("ERROR maybe!")
+                #     exit(1)
+                ind.path_cost_=old_val
 
     # do not mutate parents
-    def mutation_offspring_only(self) -> None:
+    def mutation_only_offspring(self) -> None:
         for ind in self.offspring:
             ind.try_to_mutate()
+
+    # increase the mutation rate of individuals in population
+    def boost_mutation_rate(self) -> None:
+        for ind in self.population:
+            ind.mut_prob_flip_ += self.init_mut_prob_flip * self.mut_boost_coefficient
+            ind.mut_prob_shuf_ += self.init_mut_prob_shuf * self.mut_boost_coefficient
+            ind.mut_prob_swap_ += self.init_mut_prob_swap * self.mut_boost_coefficient
+
+
+# -------------------------------------------------------------------------------------
+# Local search operators
+    # 2-opt using flip mutation on few elite candidates
+    def lopt_2opt_flip_elite(self) -> None:
+        self.population.sort(key=lambda ind: ind.evaluate(self.distanceMatrix))
+        for ind in self.population[:self.no_elites]:
+            self.flip_2opt(ind)
+
+    # 2-opt using flip mutation on whole population
+    def lopt_2opt_flip_all(self) -> None:
+        for ind in self.population:
+            self.flip_2opt(ind)
+
+    def lopt_2opt_flip_short(self) -> None:
+        pass
+
+    # 2-opt flip operator on single individual
+    def flip_2opt_fulltime(self, ind) -> None:
+        best_val = ind.evaluate(self.distanceMatrix)
+        best_route = np.copy(ind.path_)
+        improved = True
+        while (improved):
+            improved = False
+            for a in range(self.n_cities):
+                for b in range(a+2, min(a+5,self.n_cities+1)):
+                    ind.path_[a:b] = np.flip(ind.path_[a:b])
+                    ind.reset()
+                    if best_val > ind.evaluate(self.distanceMatrix):
+                        best_val = ind.evaluate(self.distanceMatrix)
+                        best_route = np.copy(ind.path_)
+                        improved = True
+                        break
+                if improved:
+                    break
+            ind.path_ = best_route
+            # debug check
+            # if best_val != ind.evaluate(self.distanceMatrix):
+            #     print("ERROR maybe!")
+            #     exit(1)
+            ind.path_cost_ = best_val
+
+    # 2-opt flip operator on single individual
+    def flip_2opt(self, ind) -> None:
+        if ind.failed_fast_opt:
+            return
+        old_val = ind.evaluate(self.distanceMatrix)
+        for a in range(self.n_cities):
+            for b in range(a+2, min(a+3,self.n_cities+1)):
+                ind.path_[a:b] = np.flip(ind.path_[a:b])
+                ind.path_cost_=None
+                if old_val > ind.evaluate(self.distanceMatrix):
+                    ind.edges_=None
+                    return
+                else:
+                    ind.path_[a:b] = np.flip(ind.path_[a:b])
+                    ind.path_cost_=old_val
+                    ind.failed_fast_opt=True
+
+
 # -------------------------------------------------------------------------------------
 # Elimination operators
 
@@ -247,7 +345,7 @@ class r0829194:
         combined.sort(key=lambda ind: ind.evaluate(self.distanceMatrix))
         # indicies = sorted(range(len(combined)), key=lambda k: combined[k].evaluate(self.distanceMatrix))
 
-        for i in range(self.crowding_pop_count):
+        for i in range(self.k_crowding_pop_count):
             combatants = random.choices(
                 range(i+1, len(combined)), k=self.k_crowding)
             combined.pop(min(combatants,
@@ -258,68 +356,71 @@ class r0829194:
 # Individual class
 
     class Individual:
-        path: np.array
-        mut_prob_flip: float
-        mut_prob_swap: float
-        mut_prob_shuf: float
-        path_cost: float
+        path_: np.array
+        mut_prob_flip_: float
+        mut_prob_swap_: float
+        mut_prob_shuf_: float
+        path_cost_: float
         edges: set
-        n_cities: int
+        n_cities_: int
+        failed_fast_opt: bool
 
         def __init__(self, path, mut_prob_flip, mut_prob_shuf, mut_prob_swap):
-            self.path = path  # ndarray
-            self.mut_prob_flip = mut_prob_flip
-            self.mut_prob_shuf = mut_prob_shuf
-            self.mut_prob_swap = mut_prob_swap
-            self.path_cost = None
+            self.path_ = path  # ndarray
+            self.mut_prob_flip_ = mut_prob_flip
+            self.mut_prob_shuf_ = mut_prob_shuf
+            self.mut_prob_swap_ = mut_prob_swap
+            self.path_cost_ = None
             self.edges_ = None
-            self.n_cities = path.shape[0]
+            self.n_cities_ = self.path_.shape[0]
+            self.failed_fast_opt = False
 
         def try_to_mutate(self) -> None:
-            if self.mut_prob_flip > np.random.uniform():
+            if self.mut_prob_flip_ > np.random.uniform():
                 self.mutate_flip()
-            if self.mut_prob_shuf > np.random.uniform():
+            if self.mut_prob_shuf_ > np.random.uniform():
                 self.mutate_shuffle()
-            if self.mut_prob_swap > np.random.uniform():
+            if self.mut_prob_swap_ > np.random.uniform():
                 self.mutate_swap()
 
         def mutate_flip(self) -> None:
-            a, b = gamma_slice(self.n_cities, 0.5)
-            self.path[a:b] = np.flip(self.path[a:b])
+            a, b = gamma_slice(self.n_cities_, 0.5)
+            self.path_[a:b] = np.flip(self.path_[a:b])
             self.reset()
 
         def mutate_shuffle(self) -> None:
-            a, b = gamma_slice(self.n_cities, 0.2)
-            np.random.shuffle(self.path[a:b])
+            a, b = gamma_slice(self.n_cities_, 0.2)
+            np.random.shuffle(self.path_[a:b])
             self.reset()
 
         def mutate_swap(self) -> None:
-            a = random.randrange(0, self.n_cities-1)
-            b = random.randrange(0, self.n_cities-1)
-            self.path[a], self.path[b] = self.path[b], self.path[a]
+            a = random.randrange(0, self.n_cities_-1)
+            b = random.randrange(0, self.n_cities_-1)
+            self.path_[a], self.path_[b] = self.path_[b], self.path_[a]
             self.reset()
 
         def reset(self) -> None:
-            self.path_cost = None
+            self.path_cost_ = None
             self.edges_ = None
+            self.failed_fast_opt = False
 
         def evaluate(self, d_matrix) -> float:
-            if self.path_cost == None:
-                self.path_cost = 0.0
-                for i in range(1, self.n_cities):
-                    self.path_cost += d_matrix[self.path[i-1]][self.path[i]]
-                self.path_cost += d_matrix[self.path[-1]][self.path[0]]
-            return self.path_cost
+            if self.path_cost_ == None:
+                self.path_cost_ = 0.0
+                for i in range(1, self.n_cities_):
+                    self.path_cost_ += d_matrix[self.path_[i-1]][self.path_[i]]
+                self.path_cost_ += d_matrix[self.path_[-1]][self.path_[0]]
+            return self.path_cost_
 
         def is_valid(self) -> bool:
-            s = set(self.path)
-            return len(s) == len(self.path)
+            s = set(self.path_)
+            return len(s) == len(self.path_)
 
         def edges(self) -> set:
             if self.edges_ == None:
-                self.edges_ = set([(self.path[i], self.path[i+1])
-                                   for i in range(self.n_cities-1)])
-                self.edges_.add((self.path[-1], self.path[0]))
+                self.edges_ = set([(self.path_[i], self.path_[i+1])
+                                   for i in range(self.n_cities_-1)])
+                self.edges_.add((self.path_[-1], self.path_[0]))
             return self.edges_
 
         def distance(self, that) -> float:
@@ -355,4 +456,4 @@ def uniform_slice(arr_len):
 
 if __name__ == "__main__":
     c = r0829194()
-    c.optimize("tour29.csv")
+    c.optimize("tour194.csv")
