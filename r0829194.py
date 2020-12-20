@@ -116,7 +116,8 @@ class r0829194:
                         ind.is_two_optimal_ = False
                     else:
                         self.c = 1
-                    self.two_opt(ind, int(self.no_cities * 0.2 * self.c))
+                    self.two_opt(
+                        ind, int(self.no_cities * min(1, 0.2 * self.c)))
                     if abs(meanTourLen-bestTourLen)/abs(bestTourLen) < self.tolerance:
                         if timeLeft < 50:
                             break
@@ -289,7 +290,7 @@ class r0829194:
     # round robin selection
     def selection_round_robin(self) -> list:
         weights = [1+sum(int(ind.evaluate() < combatant.evaluate()) for combatant
-                       in random.choices(self.population, k=self.round_robin_q_selection))
+                         in random.choices(self.population, k=self.round_robin_q_selection))
                    for ind in self.population]
         return [random.choices(self.population, weights=weights, k=2)
                 for _ in range(self.no_offspring)]

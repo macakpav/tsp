@@ -3,6 +3,10 @@ set -eu
 
 # run by ./histogram.py no_test_runs Some description of your current code
 # $./histogram.py 50 Without diversity keeping, population 100
+# requires a main function in the script:
+#       if __name__ == "__main__":
+#           c = r0829194()
+#           c.optimize("tour29.csv") # or the tour file that you want to run
 
 # your number here -------------------------
 student_number=r0829194
