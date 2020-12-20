@@ -23,6 +23,5 @@ if __name__ == "__main__":
     plt.xticks(bins,rotation=45)
     plt.ylabel("Number of runs in range")
     plt.xlabel("Final best value")
-    plt.savefig('histogram.png')
-    plt.show()
+    plt.savefig('histogram.png',bbox_inches='tight')
     plt.close()
