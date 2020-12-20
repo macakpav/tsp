@@ -1,4 +1,8 @@
 #!/bin/bash
+set -eu
+
+# run by ./histogram.py no_test_runs Some description of your current code
+# $./histogram.py 50 Without diversity keeping, population 100
 
 # your number here -------------------------
 student_number=r0829194
