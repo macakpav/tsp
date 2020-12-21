@@ -33,20 +33,21 @@ class r0829194:
         self.iteration = 0
         self.timing = 0
         self.c = 1
+        self.stop_time = 40 # max time left for the last local search
 
         # METHODS
         self.initialization = self.initialization_nearest_neigbor
         self.selection = self.selection_round_robin
         self.recombination = self.recombination_SCX
         self.mutation = self.mutation_all_keep_better
-        self.local_search = self.lopt_fast_opt_children
+        self.local_search = self.lopt_two_opt_all
         self.elimination = self.elimination_round_robin_k_crowding
 
         # META parameters
 
         # selection
         # round robin selection
-        self.round_robin_q_selection = int(self.pop_size*0.25)
+        self.round_robin_q_selection = int(self.pop_size*0.1)
 
         # recombination
         # -
@@ -63,7 +64,7 @@ class r0829194:
         self.two_opt_subinterval_size = int(self.pop_size*0.2)
 
         # elimination
-        self.crowding_k = int((self.pop_size+self.no_offspring)*0.1)  # k-tournament crowding
+        self.crowding_k = int((self.pop_size+self.no_offspring)*0.3)  # k-tournament crowding
         # number of individuals poped due to crowding
         self.crowding_pop_count = min(self.pop_size, self.no_offspring)
         self.round_robin_q_elimination = int(
@@ -79,11 +80,14 @@ class r0829194:
 
         # Your code here.
         self.no_cities = self.dist_matrix.shape[0]  # number of cities
+        self.stop_time = max(5,min(self.stop_time, (self.no_cities-100)*self.stop_time/900+10 ))
 
         # initialization
         self.initialization()
+        start = time.time()
         self.lopt_two_opt_only_population(10)
-
+        if (time.time()-start)>5:
+            self.local_search=lambda:0
         # self.validity_check()
         # self.avg_distance()
         # return
@@ -96,15 +100,10 @@ class r0829194:
 
         while True:
             self.iteration += 1
+
             # self.validity_check()
             # self.avg_distance()
-            # mut_rate_avg = self.avg_mutation_rate()
-
-            # mutation rate boosting
-            # mut_rate_avg = sum([(ind.mut_prob_flip_ + ind.mut_prob_shuf_ +
-            #                      ind.mut_prob_swap_)/3 for ind in self.population])/self.pop_size
-            # if mut_rate_avg < self.mut_boost_treshold:
-            #     self.boost_mutation_rate()
+            # self.avg_mutation_rate()
 
             # stopping criterion
             if self.iteration % self.checkInterval == 0:
@@ -119,13 +118,13 @@ class r0829194:
                     self.two_opt(
                         ind, int(self.no_cities * min(1, 0.2 * self.c)))
                     if abs(meanTourLen-bestTourLen)/abs(bestTourLen) < self.tolerance:
-                        if timeLeft < 50:
+                        if timeLeft < self.stop_time*1.5:
                             break
+                    if self.avg_distance() < 0.25:
                         print("Purge.")
                         self.purge_init(
-                            no_inds_to_keep=int(self.pop_size*0.05))
+                            no_inds_to_keep=math.ceil(self.pop_size*0.01))
                         self.lopt_fast_opt_population()
-                        # break  # converged
                     if self.avg_mutation_rate() < self.mut_boost_treshold:
                         print("Boosting mutation rate.")
                         self.boost_mutation_rate()
@@ -142,7 +141,7 @@ class r0829194:
             self.mutation()
 
             # local optimization
-            # self.local_search()
+            self.local_search()
 
             # elimination
             self.elimination()
@@ -156,20 +155,9 @@ class r0829194:
 
             # reporter -> write to file
             timeLeft = self.reporter.report(meanTourLen, bestTourLen, bestTour)
-            if timeLeft < 40:
+            if timeLeft < self.stop_time:
                 print("Time break.")
                 break
-
-            # Call the reporter with:
-            #  - the mean objective function value of the population
-            #  - the best objective function value of the population
-            #  - a 1D numpy array in the cycle notation containing the best solution
-            #    with city numbering starting from 0
-            # timeLeft = self.reporter.report(meanTourLen, bestTourLen, bestTour)
-            # if timeLeft < 0:
-            #     break
-
-        # Your code here.
 
         print("Last local optimizations for the best guy.")
         values = [ind.evaluate() for ind in self.population]
@@ -184,13 +172,15 @@ class r0829194:
         while (timeLeft > 0.02):
             old_val = best_guy.evaluate()
             for n in range(2, self.no_cities):
-                best_guy.is_two_optimal_ = False
                 meanTourLen += (best_guy.evaluate() -
                                 bestTourLen)/self.no_cities
                 bestTourLen = best_guy.evaluate()
                 bestTour = np.append(best_guy.path_, best_guy.path_[0])
                 timeLeft = self.reporter.report(
                     meanTourLen, bestTourLen, bestTour)
+                if timeLeft < 0:
+                    break
+                best_guy.is_two_optimal_ = False
                 self.two_opt(best_guy, n, n)
             if (old_val-bestTourLen)/old_val < 1e-12:  # cant do more with this
                 break
@@ -198,7 +188,7 @@ class r0829194:
         # reporter -> write to file
         timeLeft = self.reporter.report(meanTourLen, bestTourLen, bestTour)
         print("Best tour length:", bestTourLen,
-              "in", self.iteration, "iterations.")
+              "in", self.iteration, "iterations and some local optimization.")
         return 0
 
 # -------------------------------------------------------------------------------------
@@ -272,8 +262,8 @@ class r0829194:
 
         def rand2(): return max(self.min_mut_prob,
                                 self.init_mut_prob_shuf + 0.1 * np.random.normal(0.0, 1.0))
-
-        self.population[no_inds_to_keep:] = [self.Individual(self.fill_with_nearest_neighbor(starting_points[i], gamma_center=0.8), self.dist_matrix,
+        self.population.sort(key=lambda ind: ind.evaluate())
+        self.population[no_inds_to_keep:] = [self.Individual(self.fill_with_nearest_neighbor(starting_points[i], gamma_center=0.3), self.dist_matrix,
                                                              rand1(), rand2())
                                              for i in range(newly_generated)]
 
@@ -326,8 +316,8 @@ class r0829194:
     # SCX recombination
     def recombination_SCX(self, p1, p2) -> 'self.Individual':
         offspring = np.ones(self.no_cities, int) * -1
-        p1_edges_dict = dict(p1.edges())
-        p2_edges_dict = dict(p2.edges())
+        p1_edges_dict = p1.edges_dict()
+        p2_edges_dict = p2.edges_dict()
         offspring[0] = np.random.randint(0, self.no_cities)
         off_set = set([offspring[0]])
         for i in range(1, self.no_cities):
@@ -450,7 +440,6 @@ class r0829194:
 
 # 2-Opt (variable size of sub-interval)
     def two_opt(self, ind, max_subinterval_size=5, min_subinterval_size=2) -> None:
-        old_val = ind.evaluate()
         if ind.is_two_optimal_:
             return
         flipped_smthing = False
@@ -474,10 +463,6 @@ class r0829194:
                         ind.path_[a+1:b] = np.flip(ind.path_[a+1:b])
                     flipped_smthing = True
                     ind.reset()
-                    # if not ind.is_valid():
-                    #     exit(1)
-                    # if old_val < ind.evaluate():
-                    #     exit(1)
                     break
         if not flipped_smthing:
             ind.is_two_optimal_ = True
@@ -548,6 +533,7 @@ class r0829194:
         mut_prob_shuf_: float
         path_cost_: float
         edges: set
+        edges_dict_: dict
         no_cities_: int
         is_two_optimal_: bool
 
@@ -558,11 +544,12 @@ class r0829194:
             self.mut_prob_shuf_ = mut_prob_shuf
             self.path_cost_ = None
             self.edges_ = None
+            self.edges_dict_ = None
             self.no_cities_ = self.path_.shape[0]
             self.is_two_optimal_ = False
 
         def flip_keep_better(self) -> bool:
-            a, b = gamma_slice(self.no_cities_, 0.6)
+            a, b = uniform_slice(self.no_cities_)
             old_val = sum(self.distance_matrix_[self.path_[i]][self.path_[i+1]]
                           for i in range(a, b, 1))
             new_val = self.distance_matrix_[self.path_[a]][self.path_[b-1]] \
@@ -583,12 +570,12 @@ class r0829194:
             return mutated
 
         def mutate_flip(self) -> None:
-            a, b = gamma_slice(self.no_cities_, 0.25)
+            a, b = gamma_slice(self.no_cities_, 0.4)
             self.path_[a:b] = np.flip(self.path_[a:b])
             self.reset()
 
         def mutate_shuffle(self) -> None:
-            a, b = gamma_slice(self.no_cities_, 0.05)
+            a, b = gamma_slice(self.no_cities_, 0.15)
             np.random.shuffle(self.path_[a:b])
             self.reset()
 
@@ -623,9 +610,16 @@ class r0829194:
         # return a set of tuples representing edges of the path
         def edges(self) -> set:
             if self.edges_ == None:
-                self.edges_ = set((self.path_[i-1], self.path_[i])
+                self.edges_ = set(self.path_[i-1]*10000 + self.path_[i]
                                   for i in range(0, self.no_cities_))
             return self.edges_
+
+        def edges_dict(self) -> dict:
+            if self.edges_dict_ == None:
+                self.edges_dict_ = dict( (self.path_[i-1], self.path_[i])
+                                for i in range(0, self.no_cities_) )
+            return self.edges_dict_
+
 
         def distance(self, that) -> int:
             return len(self.edges().difference(that.edges()))
