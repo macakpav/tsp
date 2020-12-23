@@ -32,11 +32,11 @@ class r0829194:
         self.checkInterval = 10
         self.iteration = 0
         self.timing = 0
-        self.c = 1
-        self.stop_time = 40 # max time left for the last local search
+        self.c = 1 # to increase size of 2-opt for best individuals
+        self.stop_time = 30  # max time left for the last local search
 
         # METHODS
-        self.initialization = self.initialization_nearest_neigbor
+        self.initialization = self.initialization_smart
         self.selection = self.selection_round_robin
         self.recombination = self.recombination_SCX
         self.mutation = self.mutation_all_keep_better
@@ -77,17 +77,19 @@ class r0829194:
         file = open(filename)
         self.dist_matrix = np.loadtxt(file, delimiter=",")
         file.close()
+        self.ordered_matrix = np.argsort(self.dist_matrix,axis=1)
 
         # Your code here.
         self.no_cities = self.dist_matrix.shape[0]  # number of cities
-        self.stop_time = max(5,min(self.stop_time, (self.no_cities-100)*self.stop_time/900+10 ))
+        self.stop_time = max(
+            5, min(self.stop_time, (self.no_cities-100)*self.stop_time/900+10))
 
         # initialization
         self.initialization()
         start = time.time()
         self.lopt_two_opt_only_population(10)
-        if (time.time()-start)>5:
-            self.local_search=lambda:0
+        # if (time.time()-start) > 5:
+        #     self.local_search = lambda: 0
         # self.validity_check()
         # self.avg_distance()
         # return
@@ -118,7 +120,7 @@ class r0829194:
                     self.two_opt(
                         ind, int(self.no_cities * min(1, 0.2 * self.c)))
                     if abs(meanTourLen-bestTourLen)/abs(bestTourLen) < self.tolerance:
-                        if timeLeft < self.stop_time*1.5:
+                        if timeLeft < self.stop_time*1.2:
                             break
                     if self.avg_distance() < 0.25:
                         print("Purge.")
@@ -196,14 +198,38 @@ class r0829194:
 
     # random initialization
     def initialization_random(self) -> None:
-        def rand1(): return max(self.min_mut_prob,
-                                self.init_mut_prob_flip + 0.1 * np.random.normal(0.0, 1.0))
-
-        def rand2(): return max(self.min_mut_prob,
-                                self.init_mut_prob_shuf + 0.1 * np.random.normal(0.0, 1.0))
-
-        self.population = [self.Individual(np.random.permutation(self.no_cities), self.dist_matrix, rand1(), rand2())
+        self.population = [self.Individual(np.random.permutation(self.no_cities), self.dist_matrix, self.rand_flip(), self.rand_shuf())
                            for _ in range(self.pop_size)]
+
+    def initialization_smart(self) -> None:
+        if self.pop_size <= self.no_cities:
+            starting_points = list(range(self.no_cities))
+            candidates = [self.Individual(
+                self.fill_with_nearest_neighbor(starting_points[i], gamma_center=0.05),
+                self.dist_matrix, self.rand_flip(), self.rand_shuf())
+                for i in range(len(starting_points))]
+            candidates.sort(key=lambda ind: ind.evaluate())
+            self.population = [candidates[0]]
+            candidates.pop(0)
+            for i in range(1, self.pop_size):
+                combatants = candidates[:int(self.no_cities/self.pop_size)]
+                self.population.append(max(combatants, key=lambda ind: sum(
+                    self.population[j].distance(ind) for j in range(i))/i))
+                del candidates[:int(self.no_cities/self.pop_size)]
+        else:
+            starting_points = list(range(self.no_cities)) + random.choices(range(self.no_cities),k=self.pop_size-self.no_cities)
+            candidates = [self.Individual(
+                self.fill_with_nearest_neighbor(starting_points[i], gamma_center=0.05),
+                self.dist_matrix, self.rand_flip(), self.rand_shuf())
+                for i in range(len(starting_points))]
+            candidates.sort(key=lambda ind: ind.evaluate())
+            self.population = [candidates[0]]
+            candidates.pop(0)
+            for i in range(1, self.pop_size):
+                combatants = random.sample(candidates,k=len(candidates))
+                self.population.append(max(combatants, key=lambda ind: sum(
+                    self.population[j].distance(ind) for j in range(i))/i))
+
 
     def initialization_nearest_neigbor(self) -> None:
         if self.pop_size <= self.no_cities:
@@ -213,38 +239,36 @@ class r0829194:
             starting_points = list(range(self.no_cities)) + random.choices(
                 range(self.no_cities), k=self.pop_size-self.no_cities)
 
-        def rand1(): return max(self.min_mut_prob,
-                                self.init_mut_prob_flip + 0.1 * np.random.normal(0.0, 1.0))
-
-        def rand2(): return max(self.min_mut_prob,
-                                self.init_mut_prob_shuf + 0.1 * np.random.normal(0.0, 1.0))
-
-        self.population = [self.Individual(self.fill_with_nearest_neighbor(starting_points[i]), self.dist_matrix,
-                                           rand1(), rand2())
-                           for i in range(self.pop_size)]
+        self.population = [self.Individual(
+            self.fill_with_nearest_neighbor(starting_points[i]),
+            self.dist_matrix, self.rand_flip(), self.rand_shuf())
+            for i in range(self.pop_size)]
 
     def fill_with_nearest_neighbor(self, first_city, gamma_center=0.6) -> np.ndarray:
-        ind_path = np.ones(self.no_cities, int) * -1
+        ind_path = np.empty(self.no_cities, int)
         ind_path[0] = first_city
+        ind_set = set([ind_path[0]])
         # size of randomly generated part
         random_range = int(
             (self.no_cities-1) * min(1, max(0, np.random.gamma(gamma_center, 1))))
 
+        prev = ind_path[0]
         for i in range(1, self.no_cities-random_range):
-            sorted_nbs = np.argsort(self.dist_matrix[ind_path[i-1]][:])
-            # first (zero-th) is always the city itself (distance=0 in the matrix)
-            j = 1
-            while sorted_nbs[j] in ind_path:
+            j = 1  # 0th is the city itself
+            while self.ordered_matrix[prev][j] in ind_set:
                 j += 1
-            ind_path[i] = sorted_nbs[j]
+            ind_path[i] = self.ordered_matrix[prev][j]
+            ind_set.add(ind_path[i])
+            prev = ind_path[i]
 
         # fill the rest from random order
         rand_guy = np.random.permutation(self.no_cities)
         j = 0
         for i in range(self.no_cities-random_range, self.no_cities):
-            while rand_guy[j] in ind_path:
+            while rand_guy[j] in ind_set:
                 j += 1
             ind_path[i] = rand_guy[j]
+            ind_set.add(ind_path[i])
 
         return ind_path
 
@@ -257,22 +281,24 @@ class r0829194:
             starting_points = random.sample(
                 range(self.no_cities), k=newly_generated)
 
-        def rand1(): return max(self.min_mut_prob,
-                                self.init_mut_prob_flip + 0.1 * np.random.normal(0.0, 1.0))
-
-        def rand2(): return max(self.min_mut_prob,
-                                self.init_mut_prob_shuf + 0.1 * np.random.normal(0.0, 1.0))
         self.population.sort(key=lambda ind: ind.evaluate())
         self.population[no_inds_to_keep:] = [self.Individual(self.fill_with_nearest_neighbor(starting_points[i], gamma_center=0.3), self.dist_matrix,
-                                                             rand1(), rand2())
+                                                             self.rand_flip(), self.rand_shuf())
                                              for i in range(newly_generated)]
+
+    def rand_flip(self): return max(self.min_mut_prob,
+                                    self.init_mut_prob_flip + 0.1 * np.random.normal(0.0, 1.0))
+
+    def rand_shuf(self): return max(self.min_mut_prob,
+                                    self.init_mut_prob_shuf + 0.1 * np.random.normal(0.0, 1.0))
+
 
 # -------------------------------------------------------------------------------------
 # Selection operators
 
     # roullette wheel selection
     def selection_roullete_wheel(self) -> list:
-        weights = [1/(i.evaluate(self.dist_matrix))
+        weights = [1/(i.evaluate())
                    for i in self.population]
         return [random.choices(self.population, weights=weights, k=2)
                 for _ in range(self.no_offspring)]
@@ -497,7 +523,7 @@ class r0829194:
                            for ind in combined])
         indicies = np.argsort(-scores)
         self.population = [combined[indicies[i]]
-                           for i in range(self.no_cities)]
+                           for i in range(self.pop_size)]
         if best_guy not in self.population:
             self.population[-1] = best_guy
 
@@ -616,16 +642,17 @@ class r0829194:
 
         def edges_dict(self) -> dict:
             if self.edges_dict_ == None:
-                self.edges_dict_ = dict( (self.path_[i-1], self.path_[i])
-                                for i in range(0, self.no_cities_) )
+                self.edges_dict_ = dict((self.path_[i-1], self.path_[i])
+                                        for i in range(0, self.no_cities_))
             return self.edges_dict_
-
 
         def distance(self, that) -> int:
             return len(self.edges().difference(that.edges()))
 
     def validity_check(self) -> None:
+        assert(len(self.population)==self.pop_size)
         print("Population size: ", len(self.population))
+        assert(len(self.offspring)==self.no_offspring)
         print("Offspring size: ", len(self.offspring))
         cities = len(self.population[-1].path_)
         print("No cities: ", cities)
@@ -681,4 +708,4 @@ def uniform_slice(arr_len) -> int:
 # main
 if __name__ == "__main__":
     c = r0829194()
-    c.optimize("tour929.csv")
+    c.optimize("tour194.csv")
