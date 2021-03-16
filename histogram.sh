@@ -1,9 +1,9 @@
 #!/bin/bash
 set -eu
 
-# run by ./histogram.py no_test_runs Some description of your current code
-# $./histogram.py 50 Without diversity keeping, population 100
-# requires a main function in the script:
+# run with ./histogram.sh no_test_runs 'Some description'
+# $./histogram.sh 50 Test runs for small case
+# requires a main function in the py script:
 #       if __name__ == "__main__":
 #           c = r0829194()
 #           c.optimize("tour29.csv") # or the tour file that you want to run
@@ -87,6 +87,7 @@ done
 echo "Done with runs."
 
 python3 $temp/histogram.py $hist_csv
-mv $temp/histogram.png $out/$my_name.png
+mv $temp/histogram_best.png $out/${my_name}_best.png
+mv $temp/histogram_mean.png $out/${my_name}_mean.png
 
 exitus

@@ -17,11 +17,20 @@ if __name__ == "__main__":
     avg_runtime = sum(frame['Time'])/no_runs
     # print(no_runs)
     count, bins, ignored = plt.hist(frame['Best value'], 15, density=False)
-    binplt = [(bins[i]+bins[i+1])/2 for i in range(len(bins)-1)]
+    # binplt = [(bins[i]+bins[i+1])/2 for i in range(len(bins)-1)]
     # plt.plot(binplt, count, linewidth=2, color='r') 
     plt.title("Histogram of results, Average runtime: " + str(int(avg_runtime)) + " s" )
     plt.xticks(bins,rotation=45)
-    plt.ylabel("Number of runs in range")
+    plt.ylabel("Number of results in range")
     plt.xlabel("Final best value")
-    plt.savefig('histogram.png',bbox_inches='tight')
+    plt.savefig('histogram_best.png',bbox_inches='tight')
+    plt.close()
+
+
+    count, bins, ignored = plt.hist(frame['Mean value'], 15, density=False)
+    plt.title("Histogram of results, Average runtime: " + str(int(avg_runtime)) + " s" )
+    plt.xticks(bins,rotation=45)
+    plt.ylabel("Number of results in range")
+    plt.xlabel("Final mean value")
+    plt.savefig('histogram_mean.png',bbox_inches='tight')
     plt.close()
